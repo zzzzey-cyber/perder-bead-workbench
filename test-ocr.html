@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>OCR 词级别统计测试</title>
+  <style>
+    body { font-family: "Microsoft YaHei", sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #ff7043; }
+    .test-case { background: #f5f5f5; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
+    .test-case h3 { margin-top: 0; }
+    pre { background: #fff; padding: 12px; border-radius: 6px; border: 1px solid #ddd; font-size: 13px; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 6px 10px; border: 1px solid #ccc; text-align: left; font-size: 13px; }
+    th { background: #fff3ee; }
+    .pass { color: #43a047; font-weight: bold; }
+    .fail { color: #e53935; font-weight: bold; }
+    button { padding: 8px 16px; background: #ff7043; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    button:hover { background: #f4511e; }
+  </style>
+</head>
+<body>
+  <h1>OCR 词级别色号统计测试</h1>
+  <p>测试 <code>countColorCodes</code> 函数：模拟 Tesseract words 数组，验证色号出现次数统计是否正确</p>
+  <button onclick="runAllTests()">运行所有测试</button>
+  <div id="results"></div>
+
+  <script>
+    // 模拟新的 countColorCodes 函数
+    function countColorCodes(words, brand) {
+      if (!words || words.length === 0) return [];
+
+      const codeCounts = {};
+      const codeConfidences = {};
+
+      const codeRegex = /^([A-Za-z])[\s\-]*(\d{1,4})$/;
+
+      words.forEach(function (word) {
+        const text = (word.text || '').trim();
+        const match = text.match(codeRegex);
+        if (!match) return;
+
+        const code = match[1].toUpperCase() + match[2];
+        const confidence = word.confidence || 0;
+
+        if (code.length < 2 || code.length > 5) return;
+        if (match[2].length > 3) return;
+
+        if (!codeCounts[code]) {
+          codeCounts[code] = 0;
+          codeConfidences[code] = [];
+        }
+        codeCounts[code]++;
+        codeConfidences[code].push(confidence);
+      });
+
+      const results = [];
+      Object.keys(codeCounts).forEach(function (code) {
+        const count = codeCounts[code];
+        const confs = codeConfidences[code];
+        const avgConf = confs.reduce((s, c) => s + c, 0) / confs.length;
+
+        if (count < 2 && avgConf < 40) return;
+
+        let colorName = '';
+        if (brand) {
+          const bean = Storage ? Storage.getBeanByCode(brand, code) : null;
+          if (bean) colorName = bean.colorName;
+        }
+
+        results.push({
+          colorCode: code,
+          colorName: colorName,
+          quantity: count,
+          confidence: Math.round(avgConf)
+        });
+      });
+
+      results.sort((a, b) => a.colorCode.localeCompare(b.colorCode));
+      return results;
+    }
+
+    // 模拟 Tesseract words 数组
+    function makeWords(counts) {
+      const words = [];
+      Object.keys(counts).forEach(code => {
+        const qty = counts[code];
+        for (let i = 0; i < qty; i++) {
+          words.push({ text: code, confidence: 85 + Math.random() * 10 });
+        }
+      });
+      // 洗牌
+      for (let i = words.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [words[i], words[j]] = [words[j], words[i]];
+      }
+      return words;
+    }
+
+    const testCases = [
+      {
+        name: '标准蝴蝶图案色号统计',
+        words: makeWords({ A01: 30, A02: 45, B12: 60, C05: 20, D08: 55, G10: 50 }),
+        expected: { A01: 30, A02: 45, B12: 60, C05: 20, D08: 55, G10: 50 }
+      },
+      {
+        name: '含噪声词（非色号格式的词）',
+        words: [
+          { text: 'A01', confidence: 90 }, { text: 'A01', confidence: 88 }, { text: 'A01', confidence: 85 },
+          { text: 'B12', confidence: 92 }, { text: 'B12', confidence: 90 },
+          { text: '色号', confidence: 95 }, { text: '用量', confidence: 95 },
+          { text: '120', confidence: 90 }, { text: '颗', confidence: 85 },
+          { text: 'C05', confidence: 87 }, { text: 'C05', confidence: 85 }, { text: 'C05', confidence: 83 },
+        ],
+        expected: { A01: 3, B12: 2, C05: 3 }
+      },
+      {
+        name: 'OCR 错误：字母数字混淆（A0l→A01, B1Z→B12）',
+        words: [
+          { text: 'A01', confidence: 90 }, { text: 'A01', confidence: 90 },
+          { text: 'A0l', confidence: 45 }, // OCR 把 1 误读成 l
+          { text: 'B12', confidence: 88 },
+          { text: 'B1Z', confidence: 40 }, // OCR 把 2 误读成 Z
+          { text: 'C05', confidence: 90 },
+        ],
+        // A0l 不匹配正则（字母+字母），B1Z 也不匹配（字母+字母）
+        expected: { A01: 2, B12: 1, C05: 1 }
+      },
+      {
+        name: '带横杠/crlf 格式（A-01, B 12）',
+        words: [
+          { text: 'A-01', confidence: 90 }, { text: 'A-01', confidence: 88 },
+          { text: 'B', confidence: 95 }, { text: '12', confidence: 95 },
+          { text: 'C', confidence: 90 }, { text: '27', confidence: 90 },
+          { text: 'D08', confidence: 92 },
+        ],
+        // A-01 → A01 (匹配), B和12分开的不匹配, C和27分开的不匹配, D08匹配
+        expected: { A01: 2, D08: 1 }
+      },
+      {
+        name: '低置信度过滤（<2次且<40%置信度）',
+        words: [
+          { text: 'A01', confidence: 90 }, { text: 'A01', confidence: 88 },
+          { text: 'X99', confidence: 30 }, // 仅1次且低置信度，应被过滤
+          { text: 'Y88', confidence: 35 }, { text: 'Y88', confidence: 32 }, // 2次，保留
+        ],
+        expected: { A01: 2, Y88: 2 }
+      }
+    ];
+
+    function runAllTests() {
+      const resultsDiv = document.getElementById('results');
+      let html = '';
+      let passCount = 0, failCount = 0;
+
+      testCases.forEach((tc, idx) => {
+        const result = countColorCodes(tc.words, '');
+        const resultMap = {};
+        result.forEach(r => { resultMap[r.colorCode] = r.quantity; });
+
+        let allPass = true;
+        let details = '';
+        Object.keys(tc.expected).sort().forEach(code => {
+          const expected = tc.expected[code];
+          const actual = resultMap[code];
+          const pass = actual === expected;
+          if (!pass) allPass = false;
+          details += `<tr>
+            <td>${code}</td>
+            <td>${expected}</td>
+            <td>${actual !== undefined ? actual : '未识别'}</td>
+            <td class="${pass ? 'pass' : 'fail'}">${pass ? '✓' : '✗'}</td>
+          </tr>`;
+        });
+
+        // 检查多余的识别结果
+        result.forEach(r => {
+          if (tc.expected[r.colorCode] === undefined) {
+            allPass = false;
+            details += `<tr>
+              <td>${r.colorCode}</td>
+              <td>-</td>
+              <td>${r.quantity}</td>
+              <td class="fail">✗ 多余</td>
+            </tr>`;
+          }
+        });
+
+        if (allPass) passCount++; else failCount++;
+
+        html += `<div class="test-case">
+          <h3>${idx + 1}. ${tc.name} <span class="${allPass ? 'pass' : 'fail'}">${allPass ? '✓ 通过' : '✗ 失败'}</span></h3>
+          <table>
+            <tr><th>色号</th><th>期望</th><th>实际</th><th>结果</th></tr>
+            ${details}
+          </table>
+          <details style="margin-top:8px"><summary>原始 words 数据</summary>
+          <pre>${JSON.stringify(tc.words.slice(0, 15), null, 2)}${tc.words.length > 15 ? '\n... 共 ' + tc.words.length + ' 条' : ''}</pre>
+          </details>
+        </div>`;
+      });
+
+      html = `<div style="padding:12px;background:${failCount === 0 ? '#e8f5e9' : '#ffebee'};border-radius:8px;margin-bottom:16px;font-weight:bold">
+        ${testCases.length} 个测试，通过 ${passCount} 个，失败 ${failCount} 个
+      </div>` + html;
+
+      resultsDiv.innerHTML = html;
+    }
+
+    window.onload = runAllTests;
+  </script>
+</body>
+</html>

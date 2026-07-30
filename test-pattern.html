@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>拼豆图纸测试图</title>
+  <style>
+    body { font-family: "Microsoft YaHei", sans-serif; padding: 20px; display: flex; gap: 20px; flex-wrap: wrap; }
+    .pattern { border: 2px solid #333; display: inline-block; background: #fff; }
+    .grid { display: grid; }
+    .cell {
+      display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 10px; border: 1px solid #ddd;
+      text-shadow: 0 0 2px rgba(0,0,0,0.5);
+    }
+    .legend { margin-top: 12px; padding: 10px; background: #f5f5f5; border-radius: 8px; font-size: 13px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+    .legend-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #ccc; }
+    .info { font-size: 14px; color: #666; margin-bottom: 8px; }
+    button { padding: 10px 20px; background: #ff7043; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; margin-bottom: 16px; }
+    button:hover { background: #f4511e; }
+  </style>
+</head>
+<body>
+  <div>
+    <button onclick="downloadImage()">💾 下载测试图片</button>
+    <div class="info">这是一张模拟"拼豆图纸"的测试图片 —— 每个格子都有色号文字，用于测试 OCR 逐格识别功能。</div>
+    <div class="pattern" id="pattern">
+      <div class="grid" id="grid"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+  <canvas id="canvas" style="display:none"></canvas>
+
+  <script>
+    // 色号定义：code, name, color
+    const colorDefs = [
+      { code: 'A01', name: '白色', hex: '#FFFFFF' },
+      { code: 'A02', name: '黑色', hex: '#333333' },
+      { code: 'B12', name: '橙色', hex: '#FF8C00' },
+      { code: 'C05', name: '黄色', hex: '#FFD700' },
+      { code: 'D08', name: '蓝色', hex: '#1E90FF' },
+      { code: 'E15', name: '红色', hex: '#DC143C' },
+      { code: 'F03', name: '绿色', hex: '#228B22' },
+      { code: 'G10', name: '紫色', hex: '#8B008B' }
+    ];
+
+    // 20x15 格子的蝴蝶图案（用色号代码填充）
+    const rows = 15, cols = 20;
+    const patternCodes = [];
+
+    // 生成蝴蝶图案
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        const cx = cols / 2, cy = rows / 2;
+        const dx = Math.abs(c - cx), dy = Math.abs(r - cy);
+        const d = Math.sqrt(dx * dx + dy * dy);
+
+        if (d < 3) {
+          // 中心 - 黄色
+          row.push('C05');
+        } else if (d < 5) {
+          // 中间环 - 橙色
+          if (r < cy - 1 || r > cy + 1) row.push('B12');
+          else row.push('C05');
+        } else if (d < 7) {
+          // 外环 - 蓝色
+          if (r < cy - 2 || r > cy + 2) row.push('D08');
+          else if (d < 4) row.push('B12');
+          else row.push('D08');
+        } else if (d < 8.5) {
+          // 边缘 - 紫色
+          if (c > 2 && c < cols - 3) row.push('G10');
+          else row.push(null);
+        } else if (d < 9.5) {
+          // 最外 - 绿色（触角）
+          if (r < 3 || r > rows - 4) row.push('F03');
+          else row.push(null);
+        } else {
+          row.push(null);
+        }
+      }
+      patternCodes.push(row);
+    }
+
+    // 绘制网格
+    const grid = document.getElementById('grid');
+    grid.style.gridTemplateColumns = `repeat(${cols}, 28px)`;
+    grid.style.gridTemplateRows = `repeat(${rows}, 28px)`;
+
+    const counts = {};
+    const colorMap = {};
+    colorDefs.forEach(d => { colorMap[d.code] = d; });
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const code = patternCodes[r][c];
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        if (code) {
+          const def = colorMap[code];
+          cell.style.background = def.hex;
+          cell.textContent = code;
+          // 浅色背景用深色文字
+          const isLight = def.hex === '#FFFFFF' || def.hex === '#FFD700';
+          cell.style.color = isLight ? '#333' : '#fff';
+          counts[code] = (counts[code] || 0) + 1;
+        } else {
+          cell.style.background = '#fafafa';
+        }
+        grid.appendChild(cell);
+      }
+    }
+
+    // 图例
+    const legend = document.getElementById('legend');
+    legend.innerHTML = '<div style="font-weight:bold;margin-bottom:6px">色号用量表（用于验证）</div>';
+    let total = 0;
+    Object.keys(counts).sort().forEach(code => {
+      const def = colorMap[code];
+      total += counts[code];
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+      item.innerHTML = `
+        <div class="legend-swatch" style="background:${def.hex}"></div>
+        <span style="font-weight:bold;min-width:40px">${code}</span>
+        <span style="color:#666;min-width:40px">${def.name}</span>
+        <span style="margin-left:auto;font-weight:bold">${counts[code]} 颗</span>`;
+      legend.appendChild(item);
+    });
+    const totalDiv = document.createElement('div');
+    totalDiv.style.cssText = 'margin-top:6px;padding-top:6px;border-top:1px solid #ccc;font-weight:bold';
+    totalDiv.textContent = `合计：${total} 颗`;
+    legend.appendChild(totalDiv);
+
+    // 下载功能
+    function downloadImage() {
+      // 用 html2canvas 思路：直接用 canvas 绘制
+      const cellSize = 28;
+      const canvas = document.getElementById('canvas');
+      canvas.width = cols * cellSize;
+      canvas.height = rows * cellSize;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const code = patternCodes[r][c];
+          const x = c * cellSize, y = r * cellSize;
+          if (code) {
+            const def = colorMap[code];
+            ctx.fillStyle = def.hex;
+            ctx.fillRect(x, y, cellSize, cellSize);
+            ctx.strokeStyle = '#ddd';
+            ctx.strokeRect(x, y, cellSize, cellSize);
+            // 文字
+            ctx.fillStyle = (def.hex === '#FFFFFF' || def.hex === '#FFD700') ? '#333' : '#fff';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(code, x + cellSize / 2, y + cellSize / 2);
+          } else {
+            ctx.fillStyle = '#fafafa';
+            ctx.fillRect(x, y, cellSize, cellSize);
+            ctx.strokeStyle = '#eee';
+            ctx.strokeRect(x, y, cellSize, cellSize);
+          }
+        }
+      }
+
+      const link = document.createElement('a');
+      link.download = 'bead-pattern-test.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+  </script>
+</body>
+</html>
