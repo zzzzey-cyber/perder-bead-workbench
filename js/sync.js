@@ -247,3 +247,391 @@ const SyncPage = (function () {
 
   return { render: render };
 })();
+/* =========================================================
+   拼豆工作台：数据导出 / 导入
+   作用：
+   1. 导出当前页面域名下的全部 localStorage 数据
+   2. 将导出的 JSON 数据导入另一个访问地址
+   3. 导入前自动下载当前数据备份
+   ========================================================= */
+
+(function () {
+  'use strict';
+
+  const BACKUP_VERSION = '1.0';
+  const PANEL_ID = 'perler-data-transfer-panel';
+  const FILE_INPUT_ID = 'perler-data-import-input';
+
+  /**
+   * 生成安全的日期时间字符串
+   * 示例：2026-07-30_14-35-20
+   */
+  function getDateTimeString() {
+    const now = new Date();
+
+    const pad = (number) => String(number).padStart(2, '0');
+
+    return [
+      now.getFullYear(),
+      pad(now.getMonth() + 1),
+      pad(now.getDate())
+    ].join('-') +
+      '_' +
+      [
+        pad(now.getHours()),
+        pad(now.getMinutes()),
+        pad(now.getSeconds())
+      ].join('-');
+  }
+
+  /**
+   * 获取当前 localStorage 的全部内容
+   */
+  function collectLocalStorageData() {
+    const data = {};
+
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+
+      if (key !== null) {
+        data[key] = localStorage.getItem(key);
+      }
+    }
+
+    return data;
+  }
+
+  /**
+   * 创建完整备份对象
+   */
+  function createBackupObject() {
+    return {
+      appName: '拼豆工作台',
+      backupVersion: BACKUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      sourceUrl: window.location.href,
+      sourceOrigin: window.location.origin,
+      itemCount: localStorage.length,
+      localStorage: collectLocalStorageData()
+    };
+  }
+
+  /**
+   * 将数据对象下载为 JSON
+   */
+  function downloadJson(data, filename) {
+    const jsonText = JSON.stringify(data, null, 2);
+
+    const blob = new Blob([jsonText], {
+      type: 'application/json;charset=utf-8'
+    });
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = downloadUrl;
+    link.download = filename;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => {
+      URL.revokeObjectURL(downloadUrl);
+    }, 1000);
+  }
+
+  /**
+   * 导出全部数据
+   */
+  function exportWorkbenchData(options = {}) {
+    try {
+      const backup = createBackupObject();
+
+      const prefix = options.prefix || '拼豆工作台备份';
+      const filename = `${prefix}-${getDateTimeString()}.json`;
+
+      downloadJson(backup, filename);
+
+      if (!options.silent) {
+        alert(
+          `数据导出成功！\n\n` +
+          `共导出 ${backup.itemCount} 个数据项目。\n` +
+          `文件名：${filename}\n\n` +
+          `请妥善保存这个 JSON 文件。`
+        );
+      }
+
+      return backup;
+    } catch (error) {
+      console.error('导出数据失败：', error);
+
+      if (!options.silent) {
+        alert(`数据导出失败：${error.message}`);
+      }
+
+      return null;
+    }
+  }
+
+  /**
+   * 检查备份文件格式
+   */
+  function validateBackup(backup) {
+    if (!backup || typeof backup !== 'object') {
+      throw new Error('备份内容不是有效对象');
+    }
+
+    if (
+      !backup.localStorage ||
+      typeof backup.localStorage !== 'object' ||
+      Array.isArray(backup.localStorage)
+    ) {
+      throw new Error('备份文件中缺少 localStorage 数据');
+    }
+
+    const keys = Object.keys(backup.localStorage);
+
+    if (keys.length === 0) {
+      throw new Error('备份文件中没有可导入的数据');
+    }
+
+    return keys;
+  }
+
+  /**
+   * 将备份数据写入 localStorage
+   */
+  function restoreLocalStorageData(backup, clearExistingData) {
+    const data = backup.localStorage;
+
+    if (clearExistingData) {
+      localStorage.clear();
+    }
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        localStorage.setItem(key, value);
+      } else {
+        localStorage.setItem(key, JSON.stringify(value));
+      }
+    });
+  }
+
+  /**
+   * 读取并导入 JSON 文件
+   */
+  function importWorkbenchData(file) {
+    if (!file) {
+      return;
+    }
+
+    if (
+      !file.name.toLowerCase().endsWith('.json') &&
+      file.type !== 'application/json'
+    ) {
+      alert('请选择 JSON 格式的备份文件。');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = function (event) {
+      try {
+        const text = event.target.result;
+        const backup = JSON.parse(text);
+        const keys = validateBackup(backup);
+
+        const backupInfo = [
+          `文件：${file.name}`,
+          `数据项目：${keys.length} 个`,
+          `导出时间：${backup.exportedAt || '未知'}`,
+          `来源：${backup.sourceUrl || '未知'}`
+        ].join('\n');
+
+        const confirmed = confirm(
+          `即将导入以下备份：\n\n` +
+          `${backupInfo}\n\n` +
+          `导入会覆盖当前工作台的数据。\n` +
+          `系统会先自动下载一份当前数据备份。\n\n` +
+          `确定继续吗？`
+        );
+
+        if (!confirmed) {
+          resetFileInput();
+          return;
+        }
+
+        // 导入前自动下载当前数据
+        exportWorkbenchData({
+          prefix: '拼豆工作台-导入前自动备份',
+          silent: true
+        });
+
+        // 使用短暂延迟，保证浏览器有时间开始下载自动备份
+        setTimeout(() => {
+          try {
+            restoreLocalStorageData(backup, true);
+
+            alert(
+              `数据导入成功！\n\n` +
+              `已恢复 ${keys.length} 个数据项目。\n` +
+              `页面即将自动刷新。`
+            );
+
+            window.location.reload();
+          } catch (restoreError) {
+            console.error('恢复数据失败：', restoreError);
+
+            alert(
+              `数据写入失败：${restoreError.message}\n\n` +
+              `请保留刚才自动下载的备份文件。`
+            );
+
+            resetFileInput();
+          }
+        }, 500);
+      } catch (error) {
+        console.error('导入数据失败：', error);
+
+        alert(
+          `导入失败：${error.message}\n\n` +
+          `请确认选择的是由拼豆工作台导出的 JSON 备份文件。`
+        );
+
+        resetFileInput();
+      }
+    };
+
+    reader.onerror = function () {
+      alert('无法读取这个文件，请重新选择。');
+      resetFileInput();
+    };
+
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  /**
+   * 重置文件选择框
+   * 这样可以连续选择同一个文件
+   */
+  function resetFileInput() {
+    const input = document.getElementById(FILE_INPUT_ID);
+
+    if (input) {
+      input.value = '';
+    }
+  }
+
+  /**
+   * 创建按钮
+   */
+  function createButton(text, type) {
+    const button = document.createElement('button');
+
+    button.type = 'button';
+    button.textContent = text;
+
+    button.style.cssText = [
+      'border:none',
+      'border-radius:8px',
+      'padding:10px 14px',
+      'font-size:14px',
+      'font-weight:600',
+      'cursor:pointer',
+      'white-space:nowrap',
+      'box-shadow:0 2px 8px rgba(0,0,0,0.12)',
+      'transition:transform 0.15s ease, opacity 0.15s ease'
+    ].join(';');
+
+    if (type === 'export') {
+      button.style.background = '#ff7043';
+      button.style.color = '#ffffff';
+    } else {
+      button.style.background = '#ffffff';
+      button.style.color = '#333333';
+      button.style.border = '1px solid #dddddd';
+    }
+
+    button.addEventListener('mouseenter', () => {
+      button.style.transform = 'translateY(-1px)';
+    });
+
+    button.addEventListener('mouseleave', () => {
+      button.style.transform = 'translateY(0)';
+    });
+
+    return button;
+  }
+
+  /**
+   * 创建页面右下角的数据同步面板
+   */
+  function createDataTransferPanel() {
+    if (document.getElementById(PANEL_ID)) {
+      return;
+    }
+
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+
+    panel.style.cssText = [
+      'position:fixed',
+      'right:20px',
+      'bottom:20px',
+      'z-index:99999',
+      'display:flex',
+      'gap:10px',
+      'align-items:center',
+      'padding:10px',
+      'border-radius:12px',
+      'background:rgba(255,255,255,0.96)',
+      'box-shadow:0 4px 20px rgba(0,0,0,0.16)',
+      'backdrop-filter:blur(8px)'
+    ].join(';');
+
+    const exportButton = createButton('导出数据', 'export');
+    const importButton = createButton('导入数据', 'import');
+
+    const fileInput = document.createElement('input');
+    fileInput.id = FILE_INPUT_ID;
+    fileInput.type = 'file';
+    fileInput.accept = '.json,application/json';
+    fileInput.hidden = true;
+
+    exportButton.addEventListener('click', () => {
+      exportWorkbenchData();
+    });
+
+    importButton.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', () => {
+      const selectedFile = fileInput.files && fileInput.files[0];
+
+      importWorkbenchData(selectedFile);
+    });
+
+    panel.appendChild(exportButton);
+    panel.appendChild(importButton);
+    panel.appendChild(fileInput);
+
+    document.body.appendChild(panel);
+  }
+
+  /**
+   * 暴露为全局方法，方便以后导航菜单调用
+   */
+  window.exportWorkbenchData = exportWorkbenchData;
+  window.importWorkbenchData = importWorkbenchData;
+
+  /**
+   * 页面加载完成后创建按钮
+   */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', createDataTransferPanel);
+  } else {
+    createDataTransferPanel();
+  }
+})();
